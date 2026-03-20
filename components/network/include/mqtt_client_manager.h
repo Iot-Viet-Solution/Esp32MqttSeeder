@@ -27,6 +27,12 @@ typedef void (*mqtt_message_handler_t)(const char *topic, int topic_len,
                                        const char *data,  int data_len);
 
 /**
+ * @brief Callback invoked every time the MQTT client successfully connects
+ *        to the broker (including reconnects after a drop).
+ */
+typedef void (*mqtt_connected_handler_t)(void);
+
+/**
  * @brief Initialise the MQTT5 client and begin connecting to the broker.
  *
  * The client ID is derived from the Wi-Fi STA MAC address.
@@ -81,4 +87,15 @@ int mqtt_client_manager_subscribe(const char *topic, int qos);
  * @param handler Callback function, or NULL.
  */
 void mqtt_client_manager_set_message_handler(mqtt_message_handler_t handler);
+
+/**
+ * @brief Register a callback that is invoked on every successful broker
+ *        connection (initial connect and every reconnect).
+ *
+ * Only one handler can be active at a time; a subsequent call replaces the
+ * previous registration.  Pass NULL to deregister.
+ *
+ * @param handler Callback function, or NULL.
+ */
+void mqtt_client_manager_set_connected_handler(mqtt_connected_handler_t handler);
 

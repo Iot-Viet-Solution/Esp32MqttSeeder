@@ -57,6 +57,14 @@ menu "Esp32 MQTT Seeder Configuration"
                 - uplink/heartbeat/v1/<device_id>
                 - devices/<device_id>/log/<level>
 
+        config SEEDER_DEVICE_TYPE
+            string "Device Type"
+            default "seeder"
+            help
+                Device type string sent in the devices/init payload when the
+                device connects to the broker for the first time or after a
+                restart.
+
         config SEEDER_ATTRIBUTE_NAME
             string "Attribute name"
             default "temperature"

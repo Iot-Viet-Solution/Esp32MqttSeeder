@@ -8,4 +8,6 @@ idf_component_register(
         json
         freertos
         esp_system
+        esp_https_ota
+        esp_http_client
 )

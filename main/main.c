@@ -16,6 +16,7 @@
 #include "heartbeat_publisher.h"
 #include "counter_publisher.h"
 #include "log_publisher.h"
+#include "init_publisher.h"
 
 static const char *TAG = "main";
 
@@ -88,11 +89,14 @@ void app_main(void)
     /* ── 6. Command handler (subscribes to cmd topics) ───────────────────── */
     ESP_ERROR_CHECK(cmd_handler_init());
 
-    /* ── 7. Start publisher tasks (all pinned to Core 1) ─────────────────── */
+    /* ── 7. Init publisher (publishes devices/init on every connect) ─────── */
+    ESP_ERROR_CHECK(init_publisher_start());
+
+    /* ── 8. Start publisher tasks (all pinned to Core 1) ─────────────────── */
     ESP_ERROR_CHECK(heartbeat_publisher_start());
     ESP_ERROR_CHECK(counter_publisher_start());
     ESP_ERROR_CHECK(log_publisher_start());
 
-    ESP_LOGI(TAG, "All publishers started. Seeder is running.");
+    ESP_LOGI(TAG, "Init publisher and all publisher tasks started. Seeder is running.");
     /* app_main may return; the FreeRTOS scheduler keeps tasks alive. */
 }

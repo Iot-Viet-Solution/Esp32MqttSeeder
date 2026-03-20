@@ -32,6 +32,7 @@ static int                    s_sub_count         = 0;
 static esp_mqtt_client_handle_t s_client           = NULL;
 static volatile bool            s_connected        = false;
 static mqtt_message_handler_t   s_message_handler  = NULL;
+static mqtt_connected_handler_t s_connected_handler = NULL;
 
 /* ── Internal helpers ─────────────────────────────────────────────────────── */
 
@@ -64,6 +65,9 @@ static void mqtt5_event_handler(void *handler_args,
             ESP_LOGI(TAG, "MQTT5 connected to broker");
             s_connected = true;
             resubscribe_all();
+            if (s_connected_handler) {
+                s_connected_handler();
+            }
             break;
 
         case MQTT_EVENT_DISCONNECTED:
@@ -226,5 +230,10 @@ int mqtt_client_manager_subscribe(const char *topic, int qos)
 void mqtt_client_manager_set_message_handler(mqtt_message_handler_t handler)
 {
     s_message_handler = handler;
+}
+
+void mqtt_client_manager_set_connected_handler(mqtt_connected_handler_t handler)
+{
+    s_connected_handler = handler;
 }
 
