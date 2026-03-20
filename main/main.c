@@ -48,7 +48,7 @@ static void sync_time_via_ntp(void)
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "=== Esp32MqttSeeder starting ===");
+    ESP_LOGI(TAG, "=== ESP32MqttSeeder starting ===");
 
     /* ── 1. Non-volatile storage ──────────────────────────────────────────── */
     esp_err_t ret = nvs_flash_init();
@@ -67,9 +67,10 @@ void app_main(void)
     /* ── 4. MQTT5 client ─────────────────────────────────────────────────── */
     ESP_ERROR_CHECK(mqtt_client_manager_init());
 
-    /* Wait up to 15 s for the broker connection. */
+    /* Wait up to 15 s for the broker connection (30 × 500 ms). */
+    const int mqtt_wait_max = 15000 / 500;
     int mqtt_wait = 0;
-    while (!mqtt_client_manager_is_connected() && mqtt_wait < 30) {
+    while (!mqtt_client_manager_is_connected() && mqtt_wait < mqtt_wait_max) {
         vTaskDelay(pdMS_TO_TICKS(500));
         mqtt_wait++;
     }

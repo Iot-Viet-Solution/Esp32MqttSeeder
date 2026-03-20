@@ -13,6 +13,9 @@
 
 static const char *TAG = "mqtt_client_manager";
 
+/* MQTT5 message expiry interval (seconds) for all publishes. */
+#define MQTT5_MSG_EXPIRY_INTERVAL_SEC  60U
+
 static esp_mqtt_client_handle_t s_client     = NULL;
 static volatile bool            s_connected  = false;
 
@@ -125,7 +128,7 @@ int mqtt_client_manager_publish(const char *topic, const char *payload, int qos)
     esp_mqtt5_publish_property_config_t pub_prop = {
         .payload_format_indicator = 1, /* UTF-8 encoded payload */
         .content_type             = "application/json",
-        .message_expiry_interval  = 60,
+        .message_expiry_interval  = MQTT5_MSG_EXPIRY_INTERVAL_SEC,
     };
     esp_mqtt5_client_set_publish_property(s_client, &pub_prop);
 

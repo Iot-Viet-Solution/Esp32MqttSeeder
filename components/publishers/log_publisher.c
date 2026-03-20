@@ -48,7 +48,7 @@ static void log_task(void *pvParameters)
         strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
 
         const char *message = LOG_MESSAGES[cycle % LOG_MESSAGES_COUNT];
-        cycle++;
+        cycle = (cycle + 1) % LOG_MESSAGES_COUNT;
 
         int len = snprintf(json_buf, sizeof(json_buf),
                            "{"
