@@ -19,6 +19,12 @@
  *   cmd/<device_id>/reboot
  *       Payload: (ignored) – triggers an immediate device reboot.
  *
+ *   cmd/<device_id>/ota
+ *       Payload: {"url": "<firmware_url>", "md5": "<md5_hex_string>"}
+ *       Downloads the firmware binary from <url>, flashes it to the next OTA
+ *       partition, and reboots.  The MD5 hash is logged for reference; full
+ *       verification support can be added once the OTA scheme is finalised.
+ *
  * All config changes are applied to the runtime config (app_runtime_config)
  * and take effect on the next publish cycle of the respective publisher.
  */

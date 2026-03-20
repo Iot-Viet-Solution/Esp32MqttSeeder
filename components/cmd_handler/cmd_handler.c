@@ -9,6 +9,8 @@
 
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_https_ota.h"
+#include "esp_http_client.h"
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -23,6 +25,7 @@ static char s_topic_counter[TOPIC_BUF_SIZE];
 static char s_topic_log[TOPIC_BUF_SIZE];
 static char s_topic_device[TOPIC_BUF_SIZE];
 static char s_topic_reboot[TOPIC_BUF_SIZE];
+static char s_topic_ota[TOPIC_BUF_SIZE];
 
 /* ── Per-command handlers ─────────────────────────────────────────────────── */
 
@@ -93,6 +96,88 @@ static void handle_reboot_cmd(void)
     esp_restart();
 }
 
+/* ── OTA firmware update ──────────────────────────────────────────────────── */
+
+#define OTA_URL_MAX_LENGTH   256
+#define OTA_HTTP_TIMEOUT_MS  5000
+#define OTA_TASK_STACK_SIZE  8192
+
+/* Parameters heap-allocated by handle_ota_cmd and freed by ota_update_task. */
+typedef struct {
+    char url[OTA_URL_MAX_LENGTH];
+    char md5[33]; /* 32 hex chars + NUL */
+} ota_task_params_t;
+
+static void ota_update_task(void *pvParameters)
+{
+    ota_task_params_t *params = (ota_task_params_t *)pvParameters;
+
+    ESP_LOGI(TAG, "OTA update started: url=%s md5=%s", params->url, params->md5);
+
+    esp_http_client_config_t http_cfg = {
+        .url                    = params->url,
+        .timeout_ms             = OTA_HTTP_TIMEOUT_MS,
+        .keep_alive_enable      = true,
+        /* Allow plain HTTP for development; use a CA cert for production. */
+        .skip_cert_common_name_check = true,
+    };
+
+    esp_https_ota_config_t ota_cfg = {
+        .http_config = &http_cfg,
+    };
+
+    esp_err_t err = esp_https_ota(&ota_cfg);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "OTA successful – rebooting in 1 s");
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        free(params);
+        esp_restart();
+    } else {
+        ESP_LOGE(TAG, "OTA failed: %s", esp_err_to_name(err));
+        free(params);
+    }
+
+    vTaskDelete(NULL);
+}
+
+static void handle_ota_cmd(const cJSON *root)
+{
+    const cJSON *item_url = cJSON_GetObjectItemCaseSensitive(root, "url");
+    const cJSON *item_md5 = cJSON_GetObjectItemCaseSensitive(root, "md5");
+
+    if (!cJSON_IsString(item_url) || !item_url->valuestring ||
+            item_url->valuestring[0] == '\0') {
+        ESP_LOGW(TAG, "OTA cmd: missing or invalid 'url'");
+        return;
+    }
+
+    if (!cJSON_IsString(item_md5) || !item_md5->valuestring ||
+            item_md5->valuestring[0] == '\0') {
+        ESP_LOGW(TAG, "OTA cmd: missing or invalid 'md5'");
+        return;
+    }
+
+    ESP_LOGI(TAG, "OTA update requested: url=%s md5=%s",
+             item_url->valuestring, item_md5->valuestring);
+
+    ota_task_params_t *params = malloc(sizeof(ota_task_params_t));
+    if (!params) {
+        ESP_LOGE(TAG, "OOM – cannot start OTA task");
+        return;
+    }
+
+    strlcpy(params->url, item_url->valuestring, sizeof(params->url));
+    strlcpy(params->md5, item_md5->valuestring, sizeof(params->md5));
+
+    /* OTA runs in its own task to avoid blocking the MQTT event loop. */
+    BaseType_t ret = xTaskCreate(ota_update_task, "ota_task",
+                                 OTA_TASK_STACK_SIZE, params, 5, NULL);
+    if (ret != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create OTA task");
+        free(params);
+    }
+}
+
 /* ── MQTT message callback ────────────────────────────────────────────────── */
 
 static void on_mqtt_message(const char *topic, int topic_len,
@@ -154,6 +239,8 @@ static void on_mqtt_message(const char *topic, int topic_len,
         handle_log_cmd(root);
     } else if (strcmp(topic_str, s_topic_device) == 0) {
         handle_device_cmd(root);
+    } else if (strcmp(topic_str, s_topic_ota) == 0) {
+        handle_ota_cmd(root);
     } else {
         ESP_LOGW(TAG, "Unknown command topic: %s", topic_str);
     }
@@ -176,6 +263,8 @@ esp_err_t cmd_handler_init(void)
              "cmd/%s/config/device", APP_DEVICE_ID);
     snprintf(s_topic_reboot, sizeof(s_topic_reboot),
              "cmd/%s/reboot", APP_DEVICE_ID);
+    snprintf(s_topic_ota, sizeof(s_topic_ota),
+             "cmd/%s/ota", APP_DEVICE_ID);
 
     /* Register the message callback before subscribing. */
     mqtt_client_manager_set_message_handler(on_mqtt_message);
@@ -187,6 +276,7 @@ esp_err_t cmd_handler_init(void)
     mqtt_client_manager_subscribe(s_topic_log,       qos);
     mqtt_client_manager_subscribe(s_topic_device,    qos);
     mqtt_client_manager_subscribe(s_topic_reboot,    qos);
+    mqtt_client_manager_subscribe(s_topic_ota,       qos);
 
     ESP_LOGI(TAG, "Command handler initialised. Subscribed topics:");
     ESP_LOGI(TAG, "  %s  →  {\"interval_ms\":<ms>}", s_topic_heartbeat);
@@ -194,6 +284,7 @@ esp_err_t cmd_handler_init(void)
     ESP_LOGI(TAG, "  %s  →  {\"interval_ms\":<ms>, \"level\":\"<lvl>\"}", s_topic_log);
     ESP_LOGI(TAG, "  %s  →  {\"attribute_name\":\"<n>\", \"device_status\":\"<s>\"}", s_topic_device);
     ESP_LOGI(TAG, "  %s  →  {} (triggers reboot)", s_topic_reboot);
+    ESP_LOGI(TAG, "  %s  →  {\"url\":\"<url>\", \"md5\":\"<md5>\"} (OTA update)", s_topic_ota);
 
     return ESP_OK;
 }

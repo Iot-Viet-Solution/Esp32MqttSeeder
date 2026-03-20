@@ -24,6 +24,8 @@
 /** String wildcard for heartbeat (uplink/heartbeat/v1/<id>) and
  *  first wildcard for log (devices/<id>/log/<level>). */
 #define APP_DEVICE_ID           CONFIG_SEEDER_DEVICE_ID
+/** Device type string sent in the devices/init payload on broker connect. */
+#define APP_DEVICE_TYPE         CONFIG_SEEDER_DEVICE_TYPE
 #define APP_ATTRIBUTE_NAME      CONFIG_SEEDER_ATTRIBUTE_NAME
 #define APP_DEVICE_STATUS       CONFIG_SEEDER_DEVICE_STATUS
 
