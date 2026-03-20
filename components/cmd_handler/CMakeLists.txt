@@ -1,7 +1,11 @@
 idf_component_register(
     SRCS
-        "app_runtime_config.c"
+        "cmd_handler.c"
     INCLUDE_DIRS "include"
     REQUIRES
+        app_config
+        network
+        json
         freertos
+        esp_system
 )

@@ -16,8 +16,40 @@ static const char *TAG = "mqtt_client_manager";
 /* MQTT5 message expiry interval (seconds) for all publishes. */
 #define MQTT5_MSG_EXPIRY_INTERVAL_SEC  60U
 
-static esp_mqtt_client_handle_t s_client     = NULL;
-static volatile bool            s_connected  = false;
+/* Maximum number of topics that can be subscribed at once. */
+#define MAX_SUBSCRIPTIONS  16
+
+/* ── Subscription table ───────────────────────────────────────────────────── */
+typedef struct {
+    char topic[128];
+    int  qos;
+} subscription_entry_t;
+
+static subscription_entry_t   s_subscriptions[MAX_SUBSCRIPTIONS];
+static int                    s_sub_count         = 0;
+
+/* ── State ────────────────────────────────────────────────────────────────── */
+static esp_mqtt_client_handle_t s_client           = NULL;
+static volatile bool            s_connected        = false;
+static mqtt_message_handler_t   s_message_handler  = NULL;
+
+/* ── Internal helpers ─────────────────────────────────────────────────────── */
+
+/* Re-subscribe to all stored topics after a (re-)connect. */
+static void resubscribe_all(void)
+{
+    for (int i = 0; i < s_sub_count; i++) {
+        int msg_id = esp_mqtt_client_subscribe_single(s_client,
+                                                      s_subscriptions[i].topic,
+                                                      s_subscriptions[i].qos);
+        if (msg_id < 0) {
+            ESP_LOGW(TAG, "Re-subscribe failed for '%s'", s_subscriptions[i].topic);
+        } else {
+            ESP_LOGD(TAG, "Re-subscribed → '%s' msg_id=%d",
+                     s_subscriptions[i].topic, msg_id);
+        }
+    }
+}
 
 /* ── Internal event handler ───────────────────────────────────────────────── */
 static void mqtt5_event_handler(void *handler_args,
@@ -31,11 +63,27 @@ static void mqtt5_event_handler(void *handler_args,
         case MQTT_EVENT_CONNECTED:
             ESP_LOGI(TAG, "MQTT5 connected to broker");
             s_connected = true;
+            resubscribe_all();
             break;
 
         case MQTT_EVENT_DISCONNECTED:
             ESP_LOGW(TAG, "MQTT5 disconnected from broker");
             s_connected = false;
+            break;
+
+        case MQTT_EVENT_DATA:
+            if (s_message_handler && event->topic_len > 0) {
+                /* Skip partial / chunked messages. */
+                if (event->data_len < event->total_data_len) {
+                    ESP_LOGW(TAG, "Partial message received – skipping");
+                    break;
+                }
+                /* event->data may be NULL and event->data_len may be 0 for
+                 * messages with no payload; the handler is responsible for
+                 * validating these before use. */
+                s_message_handler(event->topic, event->topic_len,
+                                  event->data,  event->data_len);
+            }
             break;
 
         case MQTT_EVENT_PUBLISHED:
@@ -145,3 +193,38 @@ int mqtt_client_manager_publish(const char *topic, const char *payload, int qos)
     }
     return msg_id;
 }
+
+int mqtt_client_manager_subscribe(const char *topic, int qos)
+{
+    if (!topic) return -1;
+
+    /* Store for automatic re-subscription on reconnect. */
+    if (s_sub_count < MAX_SUBSCRIPTIONS) {
+        strlcpy(s_subscriptions[s_sub_count].topic, topic,
+                sizeof(s_subscriptions[0].topic));
+        s_subscriptions[s_sub_count].qos = qos;
+        s_sub_count++;
+    } else {
+        ESP_LOGW(TAG, "Subscription table full – cannot store '%s'", topic);
+    }
+
+    if (!s_connected || s_client == NULL) {
+        /* Will be subscribed on the next MQTT_EVENT_CONNECTED. */
+        ESP_LOGD(TAG, "Not connected – subscription for '%s' deferred", topic);
+        return 0;
+    }
+
+    int msg_id = esp_mqtt_client_subscribe_single(s_client, topic, qos);
+    if (msg_id < 0) {
+        ESP_LOGE(TAG, "Subscribe failed for topic '%s'", topic);
+    } else {
+        ESP_LOGI(TAG, "Subscribed → '%s' msg_id=%d", topic, msg_id);
+    }
+    return msg_id;
+}
+
+void mqtt_client_manager_set_message_handler(mqtt_message_handler_t handler)
+{
+    s_message_handler = handler;
+}
+

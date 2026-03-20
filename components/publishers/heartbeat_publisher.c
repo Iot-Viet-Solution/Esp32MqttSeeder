@@ -1,5 +1,6 @@
 #include "heartbeat_publisher.h"
 #include "app_config.h"
+#include "app_runtime_config.h"
 #include "mqtt_client_manager.h"
 #include "wifi_manager.h"
 
@@ -23,13 +24,20 @@ static void heartbeat_task(void *pvParameters)
     char topic[HEARTBEAT_TOPIC_BUF_SIZE];
     char json_buf[HEARTBEAT_JSON_BUF_SIZE];
     char timestamp[25]; /* "YYYY-MM-DDTHH:MM:SSZ" + NUL */
+    char attribute_name[64];
+    char device_status[32];
 
+    /* Topic uses the compile-time device ID (does not change at runtime). */
     snprintf(topic, sizeof(topic), "uplink/heartbeat/v1/%s", APP_DEVICE_ID);
 
-    ESP_LOGI(TAG, "Heartbeat task started. Topic: %s  Interval: %d ms",
-             topic, APP_HEARTBEAT_INTERVAL_MS);
+    ESP_LOGI(TAG, "Heartbeat task started. Topic: %s", topic);
 
     while (1) {
+        /* Read runtime-configurable values on every iteration. */
+        uint32_t interval_ms = app_runtime_config_get_heartbeat_interval_ms();
+        app_runtime_config_get_attribute_name(attribute_name, sizeof(attribute_name));
+        app_runtime_config_get_device_status(device_status, sizeof(device_status));
+
         /* Build ISO-8601 UTC timestamp. */
         time_t now;
         struct tm timeinfo;
@@ -50,8 +58,8 @@ static void heartbeat_task(void *pvParameters)
                            "\"rssi\":%d"
                            "}",
                            APP_DEVICE_ID,
-                           APP_ATTRIBUTE_NAME,
-                           APP_DEVICE_STATUS,
+                           attribute_name,
+                           device_status,
                            timestamp,
                            (int)rssi);
 
@@ -63,7 +71,7 @@ static void heartbeat_task(void *pvParameters)
                      len, (int)sizeof(json_buf));
         }
 
-        vTaskDelay(pdMS_TO_TICKS(APP_HEARTBEAT_INTERVAL_MS));
+        vTaskDelay(pdMS_TO_TICKS(interval_ms));
     }
 }
 
