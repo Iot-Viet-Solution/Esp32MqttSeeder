@@ -145,12 +145,17 @@ jobs:
           BUILD_DIR=build
           ARTIFACT_DIR=firmware
 
-          mkdir -p "$ARTIFACT_DIR"
+          # Preserve the subdirectory structure that flash_args expects:
+          #   bootloader/bootloader.bin
+          #   partition_table/partition-table.bin
+          #   Esp32MqttSeeder.bin
+          mkdir -p "$ARTIFACT_DIR/bootloader"
+          mkdir -p "$ARTIFACT_DIR/partition_table"
 
           # Essential binary images – fail if any are missing
           cp "$BUILD_DIR/Esp32MqttSeeder.bin"                  "$ARTIFACT_DIR/"
-          cp "$BUILD_DIR/bootloader/bootloader.bin"            "$ARTIFACT_DIR/"
-          cp "$BUILD_DIR/partition_table/partition-table.bin"  "$ARTIFACT_DIR/"
+          cp "$BUILD_DIR/bootloader/bootloader.bin"            "$ARTIFACT_DIR/bootloader/"
+          cp "$BUILD_DIR/partition_table/partition-table.bin"  "$ARTIFACT_DIR/partition_table/"
 
           # Optional files – tolerate absence
           cp "$BUILD_DIR/Esp32MqttSeeder.map"  "$ARTIFACT_DIR/" 2>/dev/null || true
@@ -158,7 +163,7 @@ jobs:
           cp sdkconfig                         "$ARTIFACT_DIR/sdkconfig.snapshot" 2>/dev/null || true
 
           echo "=== Firmware artifact contents ==="
-          ls -lh "$ARTIFACT_DIR"
+          ls -lhR "$ARTIFACT_DIR"
 
       - name: Upload firmware artifacts
         uses: actions/upload-artifact@v4

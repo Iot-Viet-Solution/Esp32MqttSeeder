@@ -9,12 +9,6 @@ update runtime configuration without a firmware reflash.
 
 ## Features
 
-| Topic pattern | Wildcard(s) | Payload fields |
-|---|---|---|
-| `uplink/heartbeat/v1/<device_id>` | string (configurable) | `serial_no`, `attribute_name`, `device_status`, `time_stamp` (ISO-8601 UTC), `rssi` |
-| `uplink/v3/di/<counter_id>` | number (configurable) | `time_stamp`, `shoot_count`, `pulse_time` |
-| `devices/<device_id>/log/<level>` | string + log-level | `message`, `time_stamp` |
-
 * **MQTT 5** – content-type `application/json` set on every publish via MQTT5
   publish properties.
 * **Client ID** – derived from the device MAC address (12 hex digits).
@@ -22,7 +16,8 @@ update runtime configuration without a firmware reflash.
 * **Dual-core** – all three publisher tasks are pinned to **Core 1**; the
   Wi-Fi/TCP stack runs on Core 0 as usual.
 * **Runtime config via MQTT commands** – the broker can update publish intervals
-  and other settings at runtime by publishing to the command topics below.
+  and other settings at runtime by publishing to the command topics (see
+  [docs/mqtt-topics.md](docs/mqtt-topics.md)).
 * **Clean Architecture** – `app_config` (config) → `network` (WiFi + MQTT5
   infrastructure) → `publishers` (use-case tasks) → `cmd_handler` (command
   subscriptions) → `main` (orchestration).
@@ -62,55 +57,32 @@ Run `idf.py menuconfig` and navigate to **Esp32 MQTT Seeder Configuration**:
 
 ---
 
-## MQTT Command Topics (Downlink)
+## MQTT Topics
 
-The device subscribes to the following **command topics** at startup.  All
-`<device_id>` segments use the value configured by `SEEDER_DEVICE_ID` at build
-time (e.g. `DEV-001`).
+Full reference documentation: **[docs/mqtt-topics.md](docs/mqtt-topics.md)**
 
-### Update heartbeat publish interval
+### Uplink (Device → Broker)
 
-**Topic:** `cmd/<device_id>/config/heartbeat`
+| Topic | Default interval | Payload fields |
+|---|---|---|
+| `uplink/heartbeat/v1/<device_id>` | 5 000 ms | `serial_no`, `attribute_name`, `device_status`, `time_stamp`, `rssi` |
+| `uplink/v3/di/<counter_id>` | 1 000 ms | `time_stamp`, `shoot_count`, `pulse_time` |
+| `devices/<device_id>/log/<level>` | 10 000 ms | `message`, `time_stamp` |
 
-```json
-{ "interval_ms": 3000 }
-```
+### Downlink – Command Topics (Broker → Device)
 
-### Update counter publish interval and/or counter ID
+The broker can reconfigure the device at runtime by publishing to:
 
-**Topic:** `cmd/<device_id>/config/counter`
+| Topic | Payload |
+|---|---|
+| `cmd/<device_id>/config/heartbeat` | `{"interval_ms": 3000}` |
+| `cmd/<device_id>/config/counter` | `{"interval_ms": 500, "counter_id": 2}` |
+| `cmd/<device_id>/config/log` | `{"interval_ms": 5000, "level": "warning"}` |
+| `cmd/<device_id>/config/device` | `{"attribute_name": "humidity", "device_status": "degraded"}` |
+| `cmd/<device_id>/reboot` | _(payload ignored – reboots device)_ |
 
-```json
-{ "interval_ms": 500, "counter_id": 2 }
-```
-
-Either field can be omitted to leave the current value unchanged.
-
-### Update log publish interval and/or log level
-
-**Topic:** `cmd/<device_id>/config/log`
-
-```json
-{ "interval_ms": 5000, "level": "warning" }
-```
-
-`level` is reflected in the log publish topic: `devices/<device_id>/log/<level>`.
-
-### Update heartbeat payload fields
-
-**Topic:** `cmd/<device_id>/config/device`
-
-```json
-{ "attribute_name": "humidity", "device_status": "degraded" }
-```
-
-Either field can be omitted.
-
-### Reboot the device
-
-**Topic:** `cmd/<device_id>/reboot`
-
-Payload is ignored.  The device reboots after a 1-second delay.
+`<device_id>` is set at build time via `CONFIG_SEEDER_DEVICE_ID` (default: `DEV-001`).
+See **[docs/mqtt-topics.md](docs/mqtt-topics.md)** for full payload schemas and examples.
 
 ---
 
