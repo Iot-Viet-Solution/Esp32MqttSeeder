@@ -1,5 +1,6 @@
 #include "counter_publisher.h"
 #include "app_config.h"
+#include "app_runtime_config.h"
 #include "mqtt_client_manager.h"
 
 #include <stdio.h>
@@ -24,13 +25,23 @@ static void counter_task(void *pvParameters)
     char    json_buf[COUNTER_JSON_BUF_SIZE];
     char    timestamp[25];
     uint64_t shoot_count = 0;
+    int     last_counter_id = -1; /* track changes to rebuild topic */
 
-    snprintf(topic, sizeof(topic), "uplink/v3/di/%d", APP_COUNTER_ID);
-
-    ESP_LOGI(TAG, "Counter task started. Topic: %s  Interval: %d ms  ID: %d",
-             topic, APP_COUNTER_INTERVAL_MS, APP_COUNTER_ID);
+    ESP_LOGI(TAG, "Counter task started");
 
     while (1) {
+        /* Read runtime-configurable values on every iteration. */
+        uint32_t interval_ms = app_runtime_config_get_counter_interval_ms();
+        int      counter_id  = app_runtime_config_get_counter_id();
+
+        /* Rebuild topic only when counter_id changes. */
+        if (counter_id != last_counter_id) {
+            snprintf(topic, sizeof(topic), "uplink/v3/di/%d", counter_id);
+            ESP_LOGI(TAG, "Counter topic → %s  Interval: %" PRIu32 " ms  ID: %d",
+                     topic, interval_ms, counter_id);
+            last_counter_id = counter_id;
+        }
+
         /* ISO-8601 UTC timestamp. */
         time_t now;
         struct tm timeinfo;
@@ -48,11 +59,11 @@ static void counter_task(void *pvParameters)
                            "{"
                            "\"time_stamp\":\"%s\","
                            "\"shoot_count\":%" PRIu64 ","
-                           "\"pulse_time\":%d"
+                           "\"pulse_time\":%" PRIu32
                            "}",
                            timestamp,
                            shoot_count,
-                           APP_COUNTER_INTERVAL_MS);
+                           interval_ms);
 
         if (len > 0 && len < (int)sizeof(json_buf)) {
             mqtt_client_manager_publish(topic, json_buf, APP_MQTT_QOS);
@@ -62,7 +73,7 @@ static void counter_task(void *pvParameters)
                      len, (int)sizeof(json_buf));
         }
 
-        vTaskDelay(pdMS_TO_TICKS(APP_COUNTER_INTERVAL_MS));
+        vTaskDelay(pdMS_TO_TICKS(interval_ms));
     }
 }
 

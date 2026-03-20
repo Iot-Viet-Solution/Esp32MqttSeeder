@@ -1,5 +1,6 @@
 #include "log_publisher.h"
 #include "app_config.h"
+#include "app_runtime_config.h"
 #include "mqtt_client_manager.h"
 
 #include <stdio.h>
@@ -31,15 +32,28 @@ static void log_task(void *pvParameters)
     char    topic[LOG_TOPIC_BUF_SIZE];
     char    json_buf[LOG_JSON_BUF_SIZE];
     char    timestamp[25];
+    char    log_level[16];
+    char    last_log_level[16];
     uint32_t cycle = 0;
 
-    snprintf(topic, sizeof(topic), "devices/%s/log/%s",
-             APP_DEVICE_ID, APP_LOG_LEVEL);
+    last_log_level[0] = '\0'; /* force initial topic build */
 
-    ESP_LOGI(TAG, "Log task started. Topic: %s  Interval: %d ms",
-             topic, APP_LOG_INTERVAL_MS);
+    ESP_LOGI(TAG, "Log task started");
 
     while (1) {
+        /* Read runtime-configurable values on every iteration. */
+        uint32_t interval_ms = app_runtime_config_get_log_interval_ms();
+        app_runtime_config_get_log_level(log_level, sizeof(log_level));
+
+        /* Rebuild topic only when log_level changes. */
+        if (strcmp(log_level, last_log_level) != 0) {
+            snprintf(topic, sizeof(topic), "devices/%s/log/%s",
+                     APP_DEVICE_ID, log_level);
+            ESP_LOGI(TAG, "Log topic → %s  Interval: %" PRIu32 " ms",
+                     topic, interval_ms);
+            strlcpy(last_log_level, log_level, sizeof(last_log_level));
+        }
+
         /* ISO-8601 UTC timestamp. */
         time_t now;
         struct tm timeinfo;
@@ -66,7 +80,7 @@ static void log_task(void *pvParameters)
                      len, (int)sizeof(json_buf));
         }
 
-        vTaskDelay(pdMS_TO_TICKS(APP_LOG_INTERVAL_MS));
+        vTaskDelay(pdMS_TO_TICKS(interval_ms));
     }
 }
 

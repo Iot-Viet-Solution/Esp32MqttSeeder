@@ -2,7 +2,8 @@
 
 An **ESP-IDF** firmware project for ESP32 (dual-core) that seeds three MQTT 5
 topic types to a fully MQTT5-capable broker for connection and integration
-testing.
+testing.  The device also listens on **command topics** so the broker can
+update runtime configuration without a firmware reflash.
 
 ---
 
@@ -20,8 +21,11 @@ testing.
 * **NTP time sync** – timestamps are ISO-8601 UTC via SNTP.
 * **Dual-core** – all three publisher tasks are pinned to **Core 1**; the
   Wi-Fi/TCP stack runs on Core 0 as usual.
+* **Runtime config via MQTT commands** – the broker can update publish intervals
+  and other settings at runtime by publishing to the command topics below.
 * **Clean Architecture** – `app_config` (config) → `network` (WiFi + MQTT5
-  infrastructure) → `publishers` (use-case tasks) → `main` (orchestration).
+  infrastructure) → `publishers` (use-case tasks) → `cmd_handler` (command
+  subscriptions) → `main` (orchestration).
 * **Safe JSON serialisation** – stack-allocated fixed-size buffers with
   `snprintf`; no dynamic allocation, no heap fragmentation.
 
@@ -47,7 +51,7 @@ Run `idf.py menuconfig` and navigate to **Esp32 MQTT Seeder Configuration**:
 | MQTT Username | _(empty)_ | Broker username (optional) |
 | MQTT Password | _(empty)_ | Broker password (optional) |
 | MQTT Keepalive | `60 s` | Keepalive interval |
-| Device ID | `DEV-001` | String wildcard for heartbeat & log topics |
+| Device ID | `DEV-001` | String wildcard for heartbeat & log topics, and the `<device_id>` segment in all command topics |
 | Attribute Name | `temperature` | Heartbeat payload field |
 | Device Status | `online` | Heartbeat payload field |
 | Heartbeat Interval | `5000 ms` | How often to publish heartbeat |
@@ -55,6 +59,58 @@ Run `idf.py menuconfig` and navigate to **Esp32 MQTT Seeder Configuration**:
 | Counter Interval | `1000 ms` | How often to publish counter |
 | Log Level | `info` | Log-level segment in log topic |
 | Log Interval | `10000 ms` | How often to publish log message |
+
+---
+
+## MQTT Command Topics (Downlink)
+
+The device subscribes to the following **command topics** at startup.  All
+`<device_id>` segments use the value configured by `SEEDER_DEVICE_ID` at build
+time (e.g. `DEV-001`).
+
+### Update heartbeat publish interval
+
+**Topic:** `cmd/<device_id>/config/heartbeat`
+
+```json
+{ "interval_ms": 3000 }
+```
+
+### Update counter publish interval and/or counter ID
+
+**Topic:** `cmd/<device_id>/config/counter`
+
+```json
+{ "interval_ms": 500, "counter_id": 2 }
+```
+
+Either field can be omitted to leave the current value unchanged.
+
+### Update log publish interval and/or log level
+
+**Topic:** `cmd/<device_id>/config/log`
+
+```json
+{ "interval_ms": 5000, "level": "warning" }
+```
+
+`level` is reflected in the log publish topic: `devices/<device_id>/log/<level>`.
+
+### Update heartbeat payload fields
+
+**Topic:** `cmd/<device_id>/config/device`
+
+```json
+{ "attribute_name": "humidity", "device_status": "degraded" }
+```
+
+Either field can be omitted.
+
+### Reboot the device
+
+**Topic:** `cmd/<device_id>/reboot`
+
+Payload is ignored.  The device reboots after a 1-second delay.
 
 ---
 
@@ -85,9 +141,10 @@ idf.py -p /dev/ttyUSB0 flash monitor
 ├── main/
 │   ├── CMakeLists.txt
 │   ├── Kconfig.projbuild       ← all tuneable parameters
-│   └── main.c                  ← app_main (NVS → WiFi → NTP → MQTT5 → tasks)
+│   └── main.c                  ← app_main (NVS → runtime-config → WiFi → NTP → MQTT5 → cmd → tasks)
 └── components/
-    ├── app_config/             ← config macros from Kconfig (header-only)
-    ├── network/                ← WiFi manager + MQTT5 client manager
+    ├── app_config/             ← compile-time config macros + runtime-mutable config
+    ├── network/                ← WiFi manager + MQTT5 client manager (publish + subscribe)
+    ├── cmd_handler/            ← MQTT command topic subscriptions & JSON dispatch
     └── publishers/             ← heartbeat, counter, log publisher tasks
 ```

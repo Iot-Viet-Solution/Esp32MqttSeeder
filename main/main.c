@@ -11,6 +11,8 @@
 
 #include "wifi_manager.h"
 #include "mqtt_client_manager.h"
+#include "app_runtime_config.h"
+#include "cmd_handler.h"
 #include "heartbeat_publisher.h"
 #include "counter_publisher.h"
 #include "log_publisher.h"
@@ -58,13 +60,16 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
 
-    /* ── 2. WiFi (blocks until connected or max retries) ─────────────────── */
+    /* ── 2. Runtime config (must be before publishers and cmd_handler) ───── */
+    ESP_ERROR_CHECK(app_runtime_config_init());
+
+    /* ── 3. WiFi (blocks until connected or max retries) ─────────────────── */
     ESP_ERROR_CHECK(wifi_manager_init());
 
-    /* ── 3. NTP time sync ────────────────────────────────────────────────── */
+    /* ── 4. NTP time sync ────────────────────────────────────────────────── */
     sync_time_via_ntp();
 
-    /* ── 4. MQTT5 client ─────────────────────────────────────────────────── */
+    /* ── 5. MQTT5 client ─────────────────────────────────────────────────── */
     ESP_ERROR_CHECK(mqtt_client_manager_init());
 
     /* Wait up to 15 s for the broker connection (30 × 500 ms). */
@@ -80,7 +85,10 @@ void app_main(void)
         return;
     }
 
-    /* ── 5. Start publisher tasks (all pinned to Core 1) ─────────────────── */
+    /* ── 6. Command handler (subscribes to cmd topics) ───────────────────── */
+    ESP_ERROR_CHECK(cmd_handler_init());
+
+    /* ── 7. Start publisher tasks (all pinned to Core 1) ─────────────────── */
     ESP_ERROR_CHECK(heartbeat_publisher_start());
     ESP_ERROR_CHECK(counter_publisher_start());
     ESP_ERROR_CHECK(log_publisher_start());

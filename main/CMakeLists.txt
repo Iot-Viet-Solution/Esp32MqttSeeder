@@ -6,4 +6,5 @@ idf_component_register(
         app_config
         network
         publishers
+        cmd_handler
 )
