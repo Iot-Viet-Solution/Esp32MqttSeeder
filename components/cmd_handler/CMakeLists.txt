@@ -10,4 +10,5 @@ idf_component_register(
         esp_system
         esp_https_ota
         esp_http_client
+        spi_flash
 )
