@@ -1,0 +1,169 @@
+name: Build and Publish Firmware
+
+on:
+  workflow_dispatch:
+    inputs:
+      # ── WiFi Settings ────────────────────────────────────────────────────────
+      wifi_ssid:
+        description: "WiFi SSID"
+        required: true
+        default: "MyWiFi"
+      wifi_password:
+        description: "WiFi Password"
+        required: false
+        default: ""
+      wifi_max_retry:
+        description: "Maximum WiFi reconnect retries (1–20)"
+        required: false
+        default: "5"
+
+      # ── MQTT Broker Settings ─────────────────────────────────────────────────
+      mqtt_broker_uri:
+        description: "MQTT Broker URI (e.g. mqtt://192.168.1.100:1883)"
+        required: true
+        default: "mqtt://192.168.1.100:1883"
+      mqtt_username:
+        description: "MQTT Username (leave empty if not required)"
+        required: false
+        default: ""
+      mqtt_password:
+        description: "MQTT Password (leave empty if not required)"
+        required: false
+        default: ""
+      mqtt_keepalive_sec:
+        description: "MQTT keepalive interval in seconds (10–3600)"
+        required: false
+        default: "60"
+
+      # ── Device Identity ──────────────────────────────────────────────────────
+      device_id:
+        description: "Device ID string (used in MQTT topic wildcards)"
+        required: true
+        default: "DEV-001"
+      attribute_name:
+        description: "Attribute name included in heartbeat payload"
+        required: false
+        default: "temperature"
+      device_status:
+        description: "Device status string included in heartbeat payload"
+        required: false
+        default: "online"
+
+      # ── Heartbeat Publisher ──────────────────────────────────────────────────
+      heartbeat_interval_ms:
+        description: "Heartbeat publish interval in milliseconds (500–3600000)"
+        required: false
+        default: "5000"
+
+      # ── Counter Publisher ────────────────────────────────────────────────────
+      counter_id:
+        description: "Counter ID numeric wildcard (0–65535)"
+        required: false
+        default: "1"
+      counter_interval_ms:
+        description: "Counter publish interval in milliseconds (100–3600000)"
+        required: false
+        default: "1000"
+
+      # ── Log Publisher ────────────────────────────────────────────────────────
+      log_level:
+        description: "Log level string for MQTT log topic (verbose/debug/info/warning/error/fatal/none)"
+        required: false
+        default: "info"
+      log_interval_ms:
+        description: "Log publish interval in milliseconds (500–3600000)"
+        required: false
+        default: "10000"
+
+      # ── IDF Target ──────────────────────────────────────────────────────────
+      idf_target:
+        description: "ESP-IDF target chip (esp32 / esp32s2 / esp32s3 / esp32c3)"
+        required: false
+        default: "esp32"
+
+jobs:
+  build:
+    name: Build Firmware
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Apply configuration overrides
+        env:
+          WIFI_SSID: ${{ inputs.wifi_ssid }}
+          WIFI_PASSWORD: ${{ inputs.wifi_password }}
+          WIFI_MAX_RETRY: ${{ inputs.wifi_max_retry }}
+          MQTT_BROKER_URI: ${{ inputs.mqtt_broker_uri }}
+          MQTT_USERNAME: ${{ inputs.mqtt_username }}
+          MQTT_PASSWORD: ${{ inputs.mqtt_password }}
+          MQTT_KEEPALIVE_SEC: ${{ inputs.mqtt_keepalive_sec }}
+          DEVICE_ID: ${{ inputs.device_id }}
+          ATTRIBUTE_NAME: ${{ inputs.attribute_name }}
+          DEVICE_STATUS: ${{ inputs.device_status }}
+          HEARTBEAT_INTERVAL_MS: ${{ inputs.heartbeat_interval_ms }}
+          COUNTER_ID: ${{ inputs.counter_id }}
+          COUNTER_INTERVAL_MS: ${{ inputs.counter_interval_ms }}
+          LOG_LEVEL: ${{ inputs.log_level }}
+          LOG_INTERVAL_MS: ${{ inputs.log_interval_ms }}
+        run: |
+          python3 <<'PYEOF'
+          import os
+          lines = [
+              f'CONFIG_SEEDER_WIFI_SSID="{os.environ["WIFI_SSID"]}"',
+              f'CONFIG_SEEDER_WIFI_PASSWORD="{os.environ["WIFI_PASSWORD"]}"',
+              f'CONFIG_SEEDER_WIFI_MAX_RETRY={os.environ["WIFI_MAX_RETRY"]}',
+              f'CONFIG_SEEDER_MQTT_BROKER_URI="{os.environ["MQTT_BROKER_URI"]}"',
+              f'CONFIG_SEEDER_MQTT_USERNAME="{os.environ["MQTT_USERNAME"]}"',
+              f'CONFIG_SEEDER_MQTT_PASSWORD="{os.environ["MQTT_PASSWORD"]}"',
+              f'CONFIG_SEEDER_MQTT_KEEPALIVE_SEC={os.environ["MQTT_KEEPALIVE_SEC"]}',
+              f'CONFIG_SEEDER_DEVICE_ID="{os.environ["DEVICE_ID"]}"',
+              f'CONFIG_SEEDER_ATTRIBUTE_NAME="{os.environ["ATTRIBUTE_NAME"]}"',
+              f'CONFIG_SEEDER_DEVICE_STATUS="{os.environ["DEVICE_STATUS"]}"',
+              f'CONFIG_SEEDER_HEARTBEAT_INTERVAL_MS={os.environ["HEARTBEAT_INTERVAL_MS"]}',
+              f'CONFIG_SEEDER_COUNTER_ID={os.environ["COUNTER_ID"]}',
+              f'CONFIG_SEEDER_COUNTER_INTERVAL_MS={os.environ["COUNTER_INTERVAL_MS"]}',
+              f'CONFIG_SEEDER_LOG_LEVEL="{os.environ["LOG_LEVEL"]}"',
+              f'CONFIG_SEEDER_LOG_INTERVAL_MS={os.environ["LOG_INTERVAL_MS"]}',
+          ]
+          with open("sdkconfig.defaults", "a") as f:
+              f.write("\n".join(lines) + "\n")
+          PYEOF
+
+      - name: Build with ESP-IDF
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.4.1
+          target: ${{ inputs.idf_target }}
+          command: idf.py build
+
+      - name: Collect build artifacts
+        run: |
+          BUILD_DIR=build
+          ARTIFACT_DIR=firmware
+
+          mkdir -p "$ARTIFACT_DIR"
+
+          # Essential binary images – fail if any are missing
+          cp "$BUILD_DIR/Esp32MqttSeeder.bin"                  "$ARTIFACT_DIR/"
+          cp "$BUILD_DIR/bootloader/bootloader.bin"            "$ARTIFACT_DIR/"
+          cp "$BUILD_DIR/partition_table/partition-table.bin"  "$ARTIFACT_DIR/"
+
+          # Optional files – tolerate absence
+          cp "$BUILD_DIR/Esp32MqttSeeder.map"  "$ARTIFACT_DIR/" 2>/dev/null || true
+          cp "$BUILD_DIR/flash_args"           "$ARTIFACT_DIR/" 2>/dev/null || true
+          cp sdkconfig                         "$ARTIFACT_DIR/sdkconfig.snapshot" 2>/dev/null || true
+
+          echo "=== Firmware artifact contents ==="
+          ls -lh "$ARTIFACT_DIR"
+
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ inputs.idf_target }}-${{ inputs.device_id }}-${{ github.run_number }}
+          path: firmware/
+          if-no-files-found: error
+          retention-days: 30
