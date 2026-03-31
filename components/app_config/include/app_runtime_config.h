@@ -40,6 +40,10 @@ void     app_runtime_config_set_counter_interval_ms(uint32_t ms);
 int  app_runtime_config_get_counter_id(void);
 void app_runtime_config_set_counter_id(int id);
 
+/** UTC hour (0-23) at which shoot_count is reset; 255 = disabled. */
+uint8_t app_runtime_config_get_counter_reset_hour(void);
+void    app_runtime_config_set_counter_reset_hour(uint8_t hour);
+
 /* ── Log ──────────────────────────────────────────────────────────────────── */
 uint32_t app_runtime_config_get_log_interval_ms(void);
 void     app_runtime_config_set_log_interval_ms(uint32_t ms);

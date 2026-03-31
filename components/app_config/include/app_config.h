@@ -34,8 +34,10 @@
 
 /* ── Counter Publisher ────────────────────────────────────────────────────── */
 /** Numeric wildcard for uplink/v3/di/<counter_id>. */
-#define APP_COUNTER_ID          CONFIG_SEEDER_COUNTER_ID
-#define APP_COUNTER_INTERVAL_MS CONFIG_SEEDER_COUNTER_INTERVAL_MS
+#define APP_COUNTER_ID              CONFIG_SEEDER_COUNTER_ID
+#define APP_COUNTER_INTERVAL_MS     CONFIG_SEEDER_COUNTER_INTERVAL_MS
+/** UTC hour (0-23) to reset shoot_count; 255 = disabled. */
+#define APP_COUNTER_RESET_HOUR      CONFIG_SEEDER_COUNTER_RESET_HOUR
 
 /* ── Log Publisher ────────────────────────────────────────────────────────── */
 /** Log-level string for devices/<id>/log/<level>. */

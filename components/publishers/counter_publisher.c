@@ -26,6 +26,7 @@ static void counter_task(void *pvParameters)
     char    timestamp[25];
     uint64_t shoot_count = 0;
     int     last_counter_id = -1; /* track changes to rebuild topic */
+    int     last_reset_hour = -1; /* track the hour we last reset on */
 
     ESP_LOGI(TAG, "Counter task started");
 
@@ -42,12 +43,26 @@ static void counter_task(void *pvParameters)
             last_counter_id = counter_id;
         }
 
-        /* ISO-8601 UTC timestamp. */
+        /* ISO-8601 UTC timestamp (also used for reset-hour check). */
         time_t now;
         struct tm timeinfo;
         time(&now);
         gmtime_r(&now, &timeinfo);
         strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
+
+        /* ── Scheduled counter reset ──────────────────────────────────────── */
+        uint8_t reset_hour = app_runtime_config_get_counter_reset_hour();
+        if (reset_hour <= 23) {
+            int current_hour = timeinfo.tm_hour;
+            if (current_hour == (int)reset_hour && last_reset_hour != current_hour) {
+                shoot_count = 0;
+                last_reset_hour = current_hour;
+                ESP_LOGI(TAG, "Counter reset at UTC hour %02d", current_hour);
+            } else if (current_hour != (int)reset_hour) {
+                /* Hour has moved on – allow a reset next time we hit reset_hour. */
+                last_reset_hour = -1;
+            }
+        }
 
         shoot_count++;
 

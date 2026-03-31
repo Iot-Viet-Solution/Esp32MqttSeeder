@@ -1,9 +1,10 @@
 /**
  * @file log_publisher.h
- * @brief Periodic log publisher.
+ * @brief Periodic system-metrics publisher.
  *
  * Topic:   devices/<device_id>/log/<log_level>
- * Payload: {"message":"<log string>","time_stamp":"<ISO-8601-UTC>"}
+ * Payload: {"time_stamp":"<ISO-8601-UTC>","free_heap":<bytes>,
+ *           "min_heap":<bytes>,"mqtt_queue":<bytes>,"task_count":<n>}
  */
 #pragma once
 

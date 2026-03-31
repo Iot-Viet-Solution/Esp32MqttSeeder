@@ -101,6 +101,16 @@ menu "Esp32 MQTT Seeder Configuration"
             range 100 3600000
             help
                 Interval between counter publishes in milliseconds.
+
+        config SEEDER_COUNTER_RESET_HOUR
+            int "Counter reset hour (0-23, 255 = disabled)"
+            default 255
+            range 0 255
+            help
+                UTC hour of day (0-23) at which shoot_count is automatically
+                reset to zero.  Set to 255 to disable the scheduled reset.
+                The reset fires once per hour at the first publish after the
+                configured hour begins.
     endmenu
 
     menu "Log Publisher"

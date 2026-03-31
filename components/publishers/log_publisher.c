@@ -6,25 +6,17 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <inttypes.h>
 
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
 static const char *TAG = "log_pub";
 
-#define LOG_JSON_BUF_SIZE  256
+#define LOG_JSON_BUF_SIZE  384
 #define LOG_TOPIC_BUF_SIZE 128
-
-/* Sample log messages cycled through each publish. */
-static const char *const LOG_MESSAGES[] = {
-    "Seeder is running normally",
-    "MQTT5 connection stable",
-    "Counter incremented successfully",
-    "Heartbeat published",
-    "System health check OK",
-};
-#define LOG_MESSAGES_COUNT  (sizeof(LOG_MESSAGES) / sizeof(LOG_MESSAGES[0]))
 
 /* ── Publisher task ───────────────────────────────────────────────────────── */
 static void log_task(void *pvParameters)
@@ -34,7 +26,6 @@ static void log_task(void *pvParameters)
     char    timestamp[25];
     char    log_level[16];
     char    last_log_level[16];
-    uint32_t cycle = 0;
 
     last_log_level[0] = '\0'; /* force initial topic build */
 
@@ -61,16 +52,25 @@ static void log_task(void *pvParameters)
         gmtime_r(&now, &timeinfo);
         strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
 
-        const char *message = LOG_MESSAGES[cycle % LOG_MESSAGES_COUNT];
-        cycle = (cycle + 1) % LOG_MESSAGES_COUNT;
+        /* Collect system metrics. */
+        uint32_t free_heap  = esp_get_free_heap_size();
+        uint32_t min_heap   = esp_get_minimum_free_heap_size();
+        int      mqtt_queue = mqtt_client_manager_get_outbox_size();
+        uint32_t task_count = (uint32_t)uxTaskGetNumberOfTasks();
 
         int len = snprintf(json_buf, sizeof(json_buf),
                            "{"
-                           "\"message\":\"%s\","
-                           "\"time_stamp\":\"%s\""
+                           "\"time_stamp\":\"%s\","
+                           "\"free_heap\":%" PRIu32 ","
+                           "\"min_heap\":%" PRIu32 ","
+                           "\"mqtt_queue\":%d,"
+                           "\"task_count\":%" PRIu32
                            "}",
-                           message,
-                           timestamp);
+                           timestamp,
+                           free_heap,
+                           min_heap,
+                           mqtt_queue,
+                           task_count);
 
         if (len > 0 && len < (int)sizeof(json_buf)) {
             mqtt_client_manager_publish(topic, json_buf, APP_MQTT_QOS);

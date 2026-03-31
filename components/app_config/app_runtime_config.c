@@ -17,6 +17,7 @@ typedef struct {
 
     uint32_t counter_interval_ms;
     int      counter_id;
+    uint8_t  counter_reset_hour;  /* UTC hour 0-23 to reset shoot_count; 255 = disabled */
 
     uint32_t log_interval_ms;
     char     log_level[16];
@@ -45,6 +46,7 @@ esp_err_t app_runtime_config_init(void)
 
     s_cfg.counter_interval_ms = APP_COUNTER_INTERVAL_MS;
     s_cfg.counter_id          = APP_COUNTER_ID;
+    s_cfg.counter_reset_hour  = (uint8_t)APP_COUNTER_RESET_HOUR;
 
     s_cfg.log_interval_ms = APP_LOG_INTERVAL_MS;
     strlcpy(s_cfg.log_level, APP_LOG_LEVEL, sizeof(s_cfg.log_level));
@@ -133,6 +135,22 @@ void app_runtime_config_set_counter_id(int id)
 {
     lock();
     s_cfg.counter_id = id;
+    unlock();
+}
+
+/* ── Counter reset hour ───────────────────────────────────────────────────── */
+uint8_t app_runtime_config_get_counter_reset_hour(void)
+{
+    lock();
+    uint8_t v = s_cfg.counter_reset_hour;
+    unlock();
+    return v;
+}
+
+void app_runtime_config_set_counter_reset_hour(uint8_t hour)
+{
+    lock();
+    s_cfg.counter_reset_hour = hour;
     unlock();
 }
 

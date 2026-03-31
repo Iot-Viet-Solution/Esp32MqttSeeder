@@ -62,7 +62,16 @@ static void mqtt5_event_handler(void *handler_args,
 
     switch ((esp_mqtt_event_id_t)event_id) {
         case MQTT_EVENT_CONNECTED:
-            ESP_LOGI(TAG, "MQTT5 connected to broker");
+            /* session_present=1: broker has a stored session for this client.
+             * session_present=0: broker started a clean session (subscriptions
+             * lost).  With clean_session=false this may indicate a session
+             * takeover or that the broker evicted the previous session. */
+            ESP_LOGI(TAG, "MQTT5 connected to broker (session_present=%d)",
+                     event->session_present);
+            if (!event->session_present) {
+                ESP_LOGW(TAG, "Broker started a clean session – all subscriptions "
+                              "lost, will resubscribe");
+            }
             s_connected = true;
             resubscribe_all();
             if (s_connected_handler) {
@@ -72,6 +81,15 @@ static void mqtt5_event_handler(void *handler_args,
 
         case MQTT_EVENT_DISCONNECTED:
             ESP_LOGW(TAG, "MQTT5 disconnected from broker");
+            if (event->error_handle) {
+                if (event->error_handle->error_type == MQTT_ERROR_TYPE_CONNECTION_REFUSED) {
+                    ESP_LOGW(TAG, "  reason: connection refused (code %d)",
+                             event->error_handle->connect_return_code);
+                } else if (event->error_handle->error_type == MQTT_ERROR_TYPE_TCP_TRANSPORT) {
+                    ESP_LOGW(TAG, "  reason: TCP transport error, errno=%d",
+                             event->error_handle->esp_transport_sock_errno);
+                }
+            }
             s_connected = false;
             break;
 
@@ -96,9 +114,18 @@ static void mqtt5_event_handler(void *handler_args,
 
         case MQTT_EVENT_ERROR:
             if (event->error_handle) {
-                ESP_LOGE(TAG, "MQTT5 error: type=%d esp_tls_last_esp_err=0x%x",
+                ESP_LOGE(TAG, "MQTT5 error: type=%d esp_tls_last_esp_err=0x%x "
+                              "esp_tls_stack_err=0x%x errno=%d",
                          event->error_handle->error_type,
-                         event->error_handle->esp_tls_last_esp_err);
+                         event->error_handle->esp_tls_last_esp_err,
+                         event->error_handle->esp_tls_stack_err,
+                         event->error_handle->esp_transport_sock_errno);
+                if (event->error_handle->error_type == MQTT_ERROR_TYPE_TCP_TRANSPORT) {
+                    ESP_LOGE(TAG, "  TCP transport error – check broker reachability");
+                } else if (event->error_handle->error_type == MQTT_ERROR_TYPE_CONNECTION_REFUSED) {
+                    ESP_LOGE(TAG, "  Connection refused by broker (code %d)",
+                             event->error_handle->connect_return_code);
+                }
             }
             break;
 
@@ -235,5 +262,13 @@ void mqtt_client_manager_set_message_handler(mqtt_message_handler_t handler)
 void mqtt_client_manager_set_connected_handler(mqtt_connected_handler_t handler)
 {
     s_connected_handler = handler;
+}
+
+int mqtt_client_manager_get_outbox_size(void)
+{
+    if (s_client == NULL) {
+        return -1;
+    }
+    return (int)esp_mqtt_client_get_outbox_size(s_client);
 }
 
