@@ -99,3 +99,14 @@ void mqtt_client_manager_set_message_handler(mqtt_message_handler_t handler);
  */
 void mqtt_client_manager_set_connected_handler(mqtt_connected_handler_t handler);
 
+/**
+ * @brief Return the current MQTT outbox queue size in bytes.
+ *
+ * The outbox holds QoS > 0 messages waiting for broker acknowledgement.
+ * A persistently growing outbox indicates the broker is not acknowledging
+ * messages fast enough, or that the client has been disconnected.
+ *
+ * @return Outbox size in bytes (≥ 0), or -1 if the client is not initialised.
+ */
+int mqtt_client_manager_get_outbox_size(void);
+

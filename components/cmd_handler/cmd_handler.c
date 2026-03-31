@@ -56,6 +56,18 @@ static void handle_counter_cmd(const cJSON *root)
         app_runtime_config_set_counter_id(id);
         ESP_LOGI(TAG, "Counter ID updated → %d", id);
     }
+
+    const cJSON *item_reset = cJSON_GetObjectItemCaseSensitive(root, "reset_hour");
+    if (cJSON_IsNumber(item_reset)) {
+        double h = item_reset->valuedouble;
+        uint8_t hour = (h >= 0 && h <= 23) ? (uint8_t)h : 255;
+        app_runtime_config_set_counter_reset_hour(hour);
+        if (hour <= 23) {
+            ESP_LOGI(TAG, "Counter reset hour → %02d UTC", (int)hour);
+        } else {
+            ESP_LOGI(TAG, "Counter reset hour → disabled");
+        }
+    }
 }
 
 static void handle_log_cmd(const cJSON *root)
@@ -280,7 +292,7 @@ esp_err_t cmd_handler_init(void)
 
     ESP_LOGI(TAG, "Command handler initialised. Subscribed topics:");
     ESP_LOGI(TAG, "  %s  →  {\"interval_ms\":<ms>}", s_topic_heartbeat);
-    ESP_LOGI(TAG, "  %s  →  {\"interval_ms\":<ms>, \"counter_id\":<id>}", s_topic_counter);
+    ESP_LOGI(TAG, "  %s  →  {\"interval_ms\":<ms>, \"counter_id\":<id>, \"reset_hour\":<0-23 or 255=disabled>}", s_topic_counter);
     ESP_LOGI(TAG, "  %s  →  {\"interval_ms\":<ms>, \"level\":\"<lvl>\"}", s_topic_log);
     ESP_LOGI(TAG, "  %s  →  {\"attribute_name\":\"<n>\", \"device_status\":\"<s>\"}", s_topic_device);
     ESP_LOGI(TAG, "  %s  →  {} (triggers reboot)", s_topic_reboot);
