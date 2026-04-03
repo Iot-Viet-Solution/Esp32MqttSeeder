@@ -59,7 +59,7 @@ static uint32_t reconnect_delay_ms(void)
     uint8_t exp = s_reconnect_attempt < RECONNECT_MAX_EXP
                   ? s_reconnect_attempt : RECONNECT_MAX_EXP;
     uint32_t delay = RECONNECT_BASE_MS << exp;
-    if (delay > RECONNECT_MAX_MS || delay == 0) {
+    if (delay > RECONNECT_MAX_MS) {
         delay = RECONNECT_MAX_MS;
     }
     uint32_t jitter = esp_random() % RECONNECT_JITTER_MS;
@@ -73,7 +73,7 @@ static void reconnect_timer_cb(TimerHandle_t xTimer)
     if (s_connected) {
         return; /* already reconnected by the time the timer fired */
     }
-    ESP_LOGI(TAG, "MQTT reconnect attempt %d", (int)s_reconnect_attempt + 1);
+    ESP_LOGI(TAG, "MQTT reconnect attempt %d", (int)s_reconnect_attempt);
     esp_mqtt_client_reconnect(s_client);
 }
 
@@ -90,7 +90,9 @@ static void schedule_reconnect(void)
     ESP_LOGW(TAG, "MQTT reconnect scheduled in %" PRIu32 " ms (attempt %d)",
              delay_ms, (int)s_reconnect_attempt);
     /* xTimerChangePeriod also starts the timer if it was dormant. */
-    xTimerChangePeriod(s_reconnect_timer, pdMS_TO_TICKS(delay_ms), 0);
+    if (xTimerChangePeriod(s_reconnect_timer, pdMS_TO_TICKS(delay_ms), 0) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to arm reconnect timer – reconnect will not occur");
+    }
 }
 
 /* ── Internal helpers ─────────────────────────────────────────────────────── */
@@ -135,8 +137,13 @@ static void mqtt5_event_handler(void *handler_args,
              * else.  This prevents a timer that was already queued in the
              * daemon task from firing and sending a duplicate CONNECT after we
              * have just successfully connected (which would cause a Takeover
-             * disconnect on the broker). */
-            xTimerStop(s_reconnect_timer, 0);
+             * disconnect on the broker).
+             * Note: even if xTimerStop() fails (queue full), the timer callback
+             * checks s_connected and returns early, so no duplicate CONNECT
+             * will be sent. */
+            if (xTimerStop(s_reconnect_timer, 0) != pdPASS) {
+                ESP_LOGW(TAG, "Failed to stop reconnect timer (queue full)");
+            }
             s_reconnect_attempt = 0;
             s_connected = true;
             resubscribe_all();
