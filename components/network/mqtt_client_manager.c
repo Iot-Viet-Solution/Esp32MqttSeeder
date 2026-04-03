@@ -2,6 +2,7 @@
 #include "app_config.h"
 
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <string.h>
 #include <stdio.h>
 #include <inttypes.h>
@@ -42,7 +43,7 @@ static int                    s_sub_count         = 0;
 
 /* ── State ────────────────────────────────────────────────────────────────── */
 static esp_mqtt_client_handle_t s_client            = NULL;
-static volatile bool            s_connected         = false;
+static atomic_bool               s_connected         = false;
 static mqtt_message_handler_t   s_message_handler   = NULL;
 static mqtt_connected_handler_t s_connected_handler = NULL;
 
@@ -74,21 +75,25 @@ static void reconnect_timer_cb(TimerHandle_t xTimer)
         return; /* already reconnected by the time the timer fired */
     }
     ESP_LOGI(TAG, "MQTT reconnect attempt %d", (int)s_reconnect_attempt);
-    esp_mqtt_client_reconnect(s_client);
+    esp_err_t err = esp_mqtt_client_reconnect(s_client);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_mqtt_client_reconnect() failed (err=0x%x) – "
+                      "next DISCONNECTED event will reschedule", err);
+    }
 }
 
 /* Arm the reconnect timer for the next backoff interval.
- * Increments the attempt counter after computing the delay so that the
- * first reconnect fires after RECONNECT_BASE_MS, and each subsequent
- * failure doubles the wait (up to RECONNECT_MAX_MS). */
+ * Computes the delay using the current attempt count, then increments the
+ * counter so the next failure uses a longer backoff.  The delay sequence is:
+ *   attempt 0 → 2 s, attempt 1 → 4 s, …, attempt ≥5 → 60 s  (+jitter). */
 static void schedule_reconnect(void)
 {
     uint32_t delay_ms = reconnect_delay_ms();
+    ESP_LOGW(TAG, "MQTT reconnect scheduled in %" PRIu32 " ms (attempt %d)",
+             delay_ms, (int)s_reconnect_attempt);
     if (s_reconnect_attempt < UINT8_MAX) {
         s_reconnect_attempt++;
     }
-    ESP_LOGW(TAG, "MQTT reconnect scheduled in %" PRIu32 " ms (attempt %d)",
-             delay_ms, (int)s_reconnect_attempt);
     /* xTimerChangePeriod also starts the timer if it was dormant. */
     if (xTimerChangePeriod(s_reconnect_timer, pdMS_TO_TICKS(delay_ms), 0) != pdPASS) {
         ESP_LOGE(TAG, "Failed to arm reconnect timer – reconnect will not occur");
