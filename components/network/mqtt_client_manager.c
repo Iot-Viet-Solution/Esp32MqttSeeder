@@ -47,9 +47,9 @@ static atomic_bool               s_connected         = false;
 static mqtt_message_handler_t   s_message_handler   = NULL;
 static mqtt_connected_handler_t s_connected_handler = NULL;
 
-/* Reconnect state (accessed only from the MQTT-event and timer-daemon tasks). */
-static TimerHandle_t     s_reconnect_timer   = NULL;
-static volatile uint8_t  s_reconnect_attempt = 0;
+/* Reconnect state (accessed from the MQTT-event and timer-daemon tasks). */
+static TimerHandle_t            s_reconnect_timer   = NULL;
+static atomic_uint_least8_t     s_reconnect_attempt = 0;
 
 /* ── Reconnect helpers ────────────────────────────────────────────────────── */
 
@@ -57,8 +57,8 @@ static volatile uint8_t  s_reconnect_attempt = 0;
  * delay = min(BASE * 2^attempt, MAX) + random jitter in [0, JITTER_MS). */
 static uint32_t reconnect_delay_ms(void)
 {
-    uint8_t exp = s_reconnect_attempt < RECONNECT_MAX_EXP
-                  ? s_reconnect_attempt : RECONNECT_MAX_EXP;
+    uint_least8_t attempt = atomic_load(&s_reconnect_attempt);
+    uint8_t exp = attempt < RECONNECT_MAX_EXP ? attempt : RECONNECT_MAX_EXP;
     uint32_t delay = RECONNECT_BASE_MS << exp;
     if (delay > RECONNECT_MAX_MS) {
         delay = RECONNECT_MAX_MS;
@@ -71,10 +71,10 @@ static uint32_t reconnect_delay_ms(void)
  * Runs in the timer-daemon task; must not block. */
 static void reconnect_timer_cb(TimerHandle_t xTimer)
 {
-    if (s_connected) {
+    if (atomic_load(&s_connected)) {
         return; /* already reconnected by the time the timer fired */
     }
-    ESP_LOGI(TAG, "MQTT reconnect attempt %d", (int)s_reconnect_attempt);
+    ESP_LOGI(TAG, "MQTT reconnect attempt %d", (int)atomic_load(&s_reconnect_attempt));
     esp_err_t err = esp_mqtt_client_reconnect(s_client);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "esp_mqtt_client_reconnect() failed (err=0x%x) – "
@@ -90,9 +90,10 @@ static void schedule_reconnect(void)
 {
     uint32_t delay_ms = reconnect_delay_ms();
     ESP_LOGW(TAG, "MQTT reconnect scheduled in %" PRIu32 " ms (attempt %d)",
-             delay_ms, (int)s_reconnect_attempt);
-    if (s_reconnect_attempt < UINT8_MAX) {
-        s_reconnect_attempt++;
+             delay_ms, (int)atomic_load(&s_reconnect_attempt));
+    uint_least8_t cur = atomic_load(&s_reconnect_attempt);
+    if (cur < UINT8_MAX) {
+        atomic_store(&s_reconnect_attempt, (uint_least8_t)(cur + 1));
     }
     /* xTimerChangePeriod also starts the timer if it was dormant. */
     if (xTimerChangePeriod(s_reconnect_timer, pdMS_TO_TICKS(delay_ms), 0) != pdPASS) {
@@ -149,8 +150,8 @@ static void mqtt5_event_handler(void *handler_args,
             if (xTimerStop(s_reconnect_timer, 0) != pdPASS) {
                 ESP_LOGW(TAG, "Failed to stop reconnect timer (queue full)");
             }
-            s_reconnect_attempt = 0;
-            s_connected = true;
+            atomic_store(&s_reconnect_attempt, 0);
+            atomic_store(&s_connected, true);
             resubscribe_all();
             if (s_connected_handler) {
                 s_connected_handler();
@@ -168,7 +169,7 @@ static void mqtt5_event_handler(void *handler_args,
                              event->error_handle->esp_transport_sock_errno);
                 }
             }
-            s_connected = false;
+            atomic_store(&s_connected, false);
             /* Schedule the next reconnect attempt with exponential backoff.
              * Using a single software timer ensures only one CONNECT is
              * ever in-flight at a time, eliminating the Takeover race. */
@@ -289,12 +290,12 @@ esp_mqtt_client_handle_t mqtt_client_manager_get_client(void)
 
 bool mqtt_client_manager_is_connected(void)
 {
-    return s_connected;
+    return atomic_load(&s_connected);
 }
 
 int mqtt_client_manager_publish(const char *topic, const char *payload, int qos)
 {
-    if (!s_connected || s_client == NULL) {
+    if (!atomic_load(&s_connected) || s_client == NULL) {
         ESP_LOGW(TAG, "Not connected – skipping publish to '%s'", topic);
         return -1;
     }
@@ -335,7 +336,7 @@ int mqtt_client_manager_subscribe(const char *topic, int qos)
         ESP_LOGW(TAG, "Subscription table full – cannot store '%s'", topic);
     }
 
-    if (!s_connected || s_client == NULL) {
+    if (!atomic_load(&s_connected) || s_client == NULL) {
         /* Will be subscribed on the next MQTT_EVENT_CONNECTED. */
         ESP_LOGD(TAG, "Not connected – subscription for '%s' deferred", topic);
         return 0;
