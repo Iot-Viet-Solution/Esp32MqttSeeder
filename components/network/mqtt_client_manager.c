@@ -8,8 +8,10 @@
 
 #include "esp_log.h"
 #include "esp_wifi.h"
+#include "esp_random.h"
 #include "mqtt_client.h"
 #include "mqtt5_client.h"
+#include "freertos/timers.h"
 
 static const char *TAG = "mqtt_client_manager";
 
@@ -18,6 +20,16 @@ static const char *TAG = "mqtt_client_manager";
 
 /* Maximum number of topics that can be subscribed at once. */
 #define MAX_SUBSCRIPTIONS  16
+
+/* ── Reconnect backoff ────────────────────────────────────────────────────── */
+/* Initial reconnect delay.  Doubles on every failure up to RECONNECT_MAX_MS. */
+#define RECONNECT_BASE_MS     2000U
+/* Upper bound on reconnect delay (before jitter). */
+#define RECONNECT_MAX_MS      60000U
+/* Exponent cap so the shift never overflows uint32_t (2^RECONNECT_MAX_EXP). */
+#define RECONNECT_MAX_EXP     5U
+/* Maximum random jitter added to each delay to avoid thundering-herd. */
+#define RECONNECT_JITTER_MS   2000U
 
 /* ── Subscription table ───────────────────────────────────────────────────── */
 typedef struct {
@@ -29,10 +41,57 @@ static subscription_entry_t   s_subscriptions[MAX_SUBSCRIPTIONS];
 static int                    s_sub_count         = 0;
 
 /* ── State ────────────────────────────────────────────────────────────────── */
-static esp_mqtt_client_handle_t s_client           = NULL;
-static volatile bool            s_connected        = false;
-static mqtt_message_handler_t   s_message_handler  = NULL;
+static esp_mqtt_client_handle_t s_client            = NULL;
+static volatile bool            s_connected         = false;
+static mqtt_message_handler_t   s_message_handler   = NULL;
 static mqtt_connected_handler_t s_connected_handler = NULL;
+
+/* Reconnect state (accessed only from the MQTT-event and timer-daemon tasks). */
+static TimerHandle_t     s_reconnect_timer   = NULL;
+static volatile uint8_t  s_reconnect_attempt = 0;
+
+/* ── Reconnect helpers ────────────────────────────────────────────────────── */
+
+/* Compute exponential-backoff delay with hardware-RNG jitter.
+ * delay = min(BASE * 2^attempt, MAX) + random jitter in [0, JITTER_MS). */
+static uint32_t reconnect_delay_ms(void)
+{
+    uint8_t exp = s_reconnect_attempt < RECONNECT_MAX_EXP
+                  ? s_reconnect_attempt : RECONNECT_MAX_EXP;
+    uint32_t delay = RECONNECT_BASE_MS << exp;
+    if (delay > RECONNECT_MAX_MS || delay == 0) {
+        delay = RECONNECT_MAX_MS;
+    }
+    uint32_t jitter = esp_random() % RECONNECT_JITTER_MS;
+    return delay + jitter;
+}
+
+/* FreeRTOS software-timer callback: request one reconnect attempt.
+ * Runs in the timer-daemon task; must not block. */
+static void reconnect_timer_cb(TimerHandle_t xTimer)
+{
+    if (s_connected) {
+        return; /* already reconnected by the time the timer fired */
+    }
+    ESP_LOGI(TAG, "MQTT reconnect attempt %d", (int)s_reconnect_attempt + 1);
+    esp_mqtt_client_reconnect(s_client);
+}
+
+/* Arm the reconnect timer for the next backoff interval.
+ * Increments the attempt counter after computing the delay so that the
+ * first reconnect fires after RECONNECT_BASE_MS, and each subsequent
+ * failure doubles the wait (up to RECONNECT_MAX_MS). */
+static void schedule_reconnect(void)
+{
+    uint32_t delay_ms = reconnect_delay_ms();
+    if (s_reconnect_attempt < UINT8_MAX) {
+        s_reconnect_attempt++;
+    }
+    ESP_LOGW(TAG, "MQTT reconnect scheduled in %" PRIu32 " ms (attempt %d)",
+             delay_ms, (int)s_reconnect_attempt);
+    /* xTimerChangePeriod also starts the timer if it was dormant. */
+    xTimerChangePeriod(s_reconnect_timer, pdMS_TO_TICKS(delay_ms), 0);
+}
 
 /* ── Internal helpers ─────────────────────────────────────────────────────── */
 
@@ -72,6 +131,13 @@ static void mqtt5_event_handler(void *handler_args,
                 ESP_LOGW(TAG, "Broker started a clean session – all subscriptions "
                               "lost, will resubscribe");
             }
+            /* Stop the reconnect timer and reset backoff before doing anything
+             * else.  This prevents a timer that was already queued in the
+             * daemon task from firing and sending a duplicate CONNECT after we
+             * have just successfully connected (which would cause a Takeover
+             * disconnect on the broker). */
+            xTimerStop(s_reconnect_timer, 0);
+            s_reconnect_attempt = 0;
             s_connected = true;
             resubscribe_all();
             if (s_connected_handler) {
@@ -91,6 +157,10 @@ static void mqtt5_event_handler(void *handler_args,
                 }
             }
             s_connected = false;
+            /* Schedule the next reconnect attempt with exponential backoff.
+             * Using a single software timer ensures only one CONNECT is
+             * ever in-flight at a time, eliminating the Takeover race. */
+            schedule_reconnect();
             break;
 
         case MQTT_EVENT_DATA:
@@ -138,6 +208,17 @@ static void mqtt5_event_handler(void *handler_args,
 /* ── Public API ───────────────────────────────────────────────────────────── */
 esp_err_t mqtt_client_manager_init(void)
 {
+    /* Create the reconnect timer (one-shot, inactive until first disconnect). */
+    s_reconnect_timer = xTimerCreate("mqtt_reconnect",
+                                     pdMS_TO_TICKS(RECONNECT_BASE_MS),
+                                     pdFALSE,   /* one-shot */
+                                     NULL,
+                                     reconnect_timer_cb);
+    if (s_reconnect_timer == NULL) {
+        ESP_LOGE(TAG, "Failed to create reconnect timer");
+        return ESP_ERR_NO_MEM;
+    }
+
     /* Derive client ID from Wi-Fi STA MAC address (12 hex digits, no colons). */
     uint8_t mac[6];
     ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_STA, mac));
@@ -165,7 +246,10 @@ esp_err_t mqtt_client_manager_init(void)
             .disable_clean_session = false,
         },
         .network = {
-            .reconnect_timeout_ms = 5000,
+            /* Disable the built-in fixed-interval auto-reconnect.  We manage
+             * reconnects ourselves via s_reconnect_timer with exponential
+             * backoff to prevent duplicate CONNECT packets (Takeover race). */
+            .disable_auto_reconnect = true,
         },
     };
 
