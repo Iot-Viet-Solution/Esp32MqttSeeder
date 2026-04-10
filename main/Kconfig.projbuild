@@ -27,6 +27,7 @@ menu "Esp32 MQTT Seeder Configuration"
             default "mqtt://192.168.1.100:1883"
             help
                 Full URI of the MQTT5 broker (e.g. mqtt://broker.example.com:1883).
+                For TLS connections use mqtts:// (e.g. mqtts://broker.example.com:8883).
 
         config SEEDER_MQTT_USERNAME
             string "MQTT Username"
@@ -46,6 +47,38 @@ menu "Esp32 MQTT Seeder Configuration"
             range 10 3600
             help
                 MQTT keepalive interval in seconds.
+
+        menu "TLS / Certificate Settings"
+            config SEEDER_MQTT_TLS_ENABLED
+                bool "Enable TLS for MQTT connection"
+                default n
+                help
+                    Enable TLS/SSL encryption for the MQTT connection.
+                    The broker URI must use the mqtts:// scheme when this is enabled.
+                    Certificate files are embedded into the firmware at build time
+                    from the project-root certs/ directory.
+
+            config SEEDER_MQTT_CA_CERT
+                bool "Embed CA certificate for broker verification"
+                depends on SEEDER_MQTT_TLS_ENABLED
+                default n
+                help
+                    Embed the CA certificate used to verify the broker's TLS certificate.
+                    Place the PEM-encoded certificate at certs/mqtt_ca.crt before building.
+                    When disabled with TLS enabled, broker certificate verification is
+                    skipped (not recommended for production).
+
+            config SEEDER_MQTT_CLIENT_CERT
+                bool "Embed client certificate and key (mutual TLS)"
+                depends on SEEDER_MQTT_TLS_ENABLED
+                default n
+                help
+                    Embed a client certificate and private key for mutual TLS (mTLS)
+                    authentication.  Place the PEM-encoded files at:
+                      certs/mqtt_client.crt  – client certificate
+                      certs/mqtt_client.key  – client private key
+                    These files must be present before building.
+        endmenu
     endmenu
 
     menu "Device Identity"

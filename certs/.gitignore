@@ -1,0 +1,6 @@
+# Ignore certificate and key files – never commit secrets to source control.
+*.crt
+*.key
+*.pem
+*.p12
+*.pfx
