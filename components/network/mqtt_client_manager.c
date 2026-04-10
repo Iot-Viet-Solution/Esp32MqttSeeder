@@ -14,6 +14,19 @@
 #include "mqtt5_client.h"
 #include "freertos/timers.h"
 
+/* ── Optional TLS certificate references ──────────────────────────────────── */
+#ifdef CONFIG_SEEDER_MQTT_CA_CERT
+extern const uint8_t mqtt_ca_crt_start[]     asm("_binary_mqtt_ca_crt_start");
+extern const uint8_t mqtt_ca_crt_end[]       asm("_binary_mqtt_ca_crt_end");
+#endif
+
+#ifdef CONFIG_SEEDER_MQTT_CLIENT_CERT
+extern const uint8_t mqtt_client_crt_start[] asm("_binary_mqtt_client_crt_start");
+extern const uint8_t mqtt_client_crt_end[]   asm("_binary_mqtt_client_crt_end");
+extern const uint8_t mqtt_client_key_start[] asm("_binary_mqtt_client_key_start");
+extern const uint8_t mqtt_client_key_end[]   asm("_binary_mqtt_client_key_end");
+#endif
+
 static const char *TAG = "mqtt_client_manager";
 
 /* MQTT5 message expiry interval (seconds) for all publishes. */
@@ -246,12 +259,32 @@ esp_err_t mqtt_client_manager_init(void)
     const esp_mqtt_client_config_t mqtt_cfg = {
         .broker = {
             .address.uri = APP_MQTT_BROKER_URI,
+#ifdef CONFIG_SEEDER_MQTT_TLS_ENABLED
+            .verification = {
+#ifdef CONFIG_SEEDER_MQTT_CA_CERT
+                .certificate     = (const char *)mqtt_ca_crt_start,
+                .certificate_len = (size_t)(mqtt_ca_crt_end - mqtt_ca_crt_start),
+#else
+                /* No CA cert provided – skip broker certificate verification. */
+                .skip_cert_common_name_check = true,
+                .use_global_ca_store         = false,
+#endif /* CONFIG_SEEDER_MQTT_CA_CERT */
+            },
+#endif /* CONFIG_SEEDER_MQTT_TLS_ENABLED */
         },
         .credentials = {
             .client_id = client_id,
             .username  = (strlen(APP_MQTT_USERNAME) > 0) ? APP_MQTT_USERNAME : NULL,
-            .authentication.password =
-                (strlen(APP_MQTT_PASSWORD) > 0) ? APP_MQTT_PASSWORD : NULL,
+            .authentication = {
+                .password =
+                    (strlen(APP_MQTT_PASSWORD) > 0) ? APP_MQTT_PASSWORD : NULL,
+#ifdef CONFIG_SEEDER_MQTT_CLIENT_CERT
+                .certificate     = (const char *)mqtt_client_crt_start,
+                .certificate_len = (size_t)(mqtt_client_crt_end - mqtt_client_crt_start),
+                .key             = (const char *)mqtt_client_key_start,
+                .key_len         = (size_t)(mqtt_client_key_end - mqtt_client_key_start),
+#endif /* CONFIG_SEEDER_MQTT_CLIENT_CERT */
+            },
         },
         .session = {
             .protocol_ver        = MQTT_PROTOCOL_V_5,
