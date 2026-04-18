@@ -24,7 +24,7 @@ menu "Esp32 MQTT Seeder Configuration"
     menu "MQTT Broker Settings"
         config SEEDER_MQTT_BROKER_URI
             string "MQTT Broker URI"
-            default "mqtt://192.168.1.100:1883"
+            default "mqtts://192.168.1.100:8883"
             help
                 Full URI of the MQTT5 broker (e.g. mqtt://broker.example.com:1883).
                 For TLS connections use mqtts:// (e.g. mqtts://broker.example.com:8883).
@@ -51,22 +51,40 @@ menu "Esp32 MQTT Seeder Configuration"
         menu "TLS / Certificate Settings"
             config SEEDER_MQTT_TLS_ENABLED
                 bool "Enable TLS for MQTT connection"
-                default n
+                default y
                 help
                     Enable TLS/SSL encryption for the MQTT connection.
                     The broker URI must use the mqtts:// scheme when this is enabled.
                     Certificate files are embedded into the firmware at build time
                     from the project-root certs/ directory.
 
-            config SEEDER_MQTT_CA_CERT
-                bool "Embed CA certificate for broker verification"
+            choice SEEDER_MQTT_TLS_VERIFY_MODE
+                prompt "Broker certificate verification mode"
                 depends on SEEDER_MQTT_TLS_ENABLED
-                default n
+                default SEEDER_MQTT_TLS_VERIFY_CA
+                help
+                    Select how the MQTT broker certificate is verified.
+
+            config SEEDER_MQTT_TLS_VERIFY_CA
+                bool "Verify broker using CA certificate"
                 help
                     Embed the CA certificate used to verify the broker's TLS certificate.
                     Place the PEM-encoded certificate at certs/mqtt_ca.crt before building.
-                    When disabled with TLS enabled, broker certificate verification is
-                    skipped (not recommended for production).
+
+            config SEEDER_MQTT_TLS_VERIFY_THUMBPRINT
+                bool "Verify broker using pinned broker cert (thumbprint-style)"
+                help
+                    Embed the broker leaf certificate at certs/mqtt_broker.crt and
+                    verify TLS against that exact certificate.
+                    This behaves like certificate pinning and can be used as a
+                    thumbprint-style verification alternative to CA trust.
+
+            config SEEDER_MQTT_TLS_VERIFY_INSECURE
+                bool "Skip broker certificate verification (insecure)"
+                help
+                    Do not verify the broker certificate. This is for local testing only
+                    and is not recommended for production.
+            endchoice
 
             config SEEDER_MQTT_CLIENT_CERT
                 bool "Embed client certificate and key (mutual TLS)"

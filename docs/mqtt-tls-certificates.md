@@ -3,6 +3,11 @@
 This guide explains how to enable TLS encryption and X.509 certificate
 authentication for the MQTT connection in **Esp32MqttSeeder**.
 
+Current project default is **one-way TLS**:
+- TLS enabled
+- broker certificate verification enabled (CA cert)
+- client certificate disabled (mutual TLS is optional)
+
 Certificates are **optional** – the device works with plain `mqtt://` without
 any certificate configuration.
 
@@ -13,10 +18,12 @@ any certificate configuration.
 | Kconfig option | Purpose |
 |---|---|
 | `SEEDER_MQTT_TLS_ENABLED` | Enable TLS; broker URI must use `mqtts://` |
-| `SEEDER_MQTT_CA_CERT` | Verify broker with a CA certificate |
-| `SEEDER_MQTT_CLIENT_CERT` | Authenticate device to broker (mutual TLS) |
+| `SEEDER_MQTT_TLS_VERIFY_CA` | Verify broker with a CA certificate |
+| `SEEDER_MQTT_TLS_VERIFY_THUMBPRINT` | Verify broker with pinned broker cert (thumbprint-style) |
+| `SEEDER_MQTT_TLS_VERIFY_INSECURE` | Skip broker verification (test only) |
+| `SEEDER_MQTT_CLIENT_CERT` | Authenticate device to broker (mutual TLS, optional) |
 
-All three options are found in **menuconfig** under:
+These TLS options are found in **menuconfig** under:
 
 ```
 Esp32 MQTT Seeder Configuration
@@ -33,7 +40,8 @@ When TLS features are enabled, the firmware embeds the certificate(s) at
 
 | File | Used when |
 |---|---|
-| `certs/mqtt_ca.crt` | `SEEDER_MQTT_CA_CERT` is enabled |
+| `certs/mqtt_ca.crt` | `SEEDER_MQTT_TLS_VERIFY_CA` is selected |
+| `certs/mqtt_broker.crt` | `SEEDER_MQTT_TLS_VERIFY_THUMBPRINT` is selected |
 | `certs/mqtt_client.crt` | `SEEDER_MQTT_CLIENT_CERT` is enabled |
 | `certs/mqtt_client.key` | `SEEDER_MQTT_CLIENT_CERT` is enabled |
 
@@ -46,6 +54,96 @@ control.
 ## Step-by-Step Setup
 
 ### 1. Obtain or generate certificates
+
+#### Python generator (CLI and YAML)
+
+This repository includes a flexible certificate generator:
+
+```bash
+python test/mqtt/generate_local_tls_certs.py --help
+```
+
+Quick one-way TLS example (CA + broker cert, no per-device cert management):
+
+```bash
+python test/mqtt/generate_local_tls_certs.py \
+  --profile broker \
+  --broker-cn 192.168.1.82 \
+  --broker-ip 192.168.1.82 \
+  --broker-dns localhost \
+  --broker-pfx \
+  --broker-pfx-password "change-me"
+```
+
+Quick custom cert example:
+
+```bash
+python test/mqtt/generate_local_tls_certs.py \
+  --profile custom \
+  --cert-name device_001.crt \
+  --key-name device_001.key \
+  --cert-cn device-001 \
+  --eku client \
+  --cert-dns device-001.local \
+  --cert-ip 192.168.1.90
+```
+
+YAML config is supported via `--config` and can define multiple jobs in one file.
+
+A ready-to-edit sample is included at `test/mqtt/certs-config.example.yaml`.
+The sample defaults to one-way TLS generation and keeps mTLS examples commented.
+
+Example `test/mqtt/certs-config.yaml`:
+
+```yaml
+certs-dir: certs
+days: 3650
+backup-existing: true
+
+defaults:
+  ca-cert-name: mqtt_ca.crt
+  ca-key-name: mqtt_ca.key
+
+jobs:
+  - profile: broker
+    broker-cn: 192.168.1.82
+    broker-dns:
+      - localhost
+      - mqtt.local
+    broker-ip:
+      - 127.0.0.1
+      - 192.168.1.82
+    broker-pfx: true
+    broker-pfx-name: mqtt_broker.pfx
+    broker-pfx-password: change-me
+
+  - profile: client
+    cert-dns:
+      - mqtt-client
+      - laptop-client
+
+  - profile: custom
+    cert-name: seeder_device_001.crt
+    key-name: seeder_device_001.key
+    cert-cn: seeder-device-001
+    eku:
+      - client
+    cert-dns:
+      - seeder-device-001.local
+    cert-ip:
+      - 192.168.1.90
+```
+
+Run all YAML jobs:
+
+```bash
+python test/mqtt/generate_local_tls_certs.py --config test/mqtt/certs-config.example.yaml
+```
+
+Notes:
+- You can use `kebab-case` or `snake_case` keys in YAML.
+- List fields like `broker-ip`, `broker-dns`, `cert-ip`, `cert-dns`, and `eku` support multiple values.
+- CLI flags still work and can override defaults from YAML.
 
 #### Self-signed CA + broker + client certificates (for testing)
 
@@ -120,18 +218,91 @@ Esp32 MQTT Seeder Configuration
 
 | Scenario | Options to enable |
 |---|---|
-| TLS encryption only (no cert verification) | `SEEDER_MQTT_TLS_ENABLED` |
-| TLS + broker verification | `SEEDER_MQTT_TLS_ENABLED` + `SEEDER_MQTT_CA_CERT` |
-| TLS + broker verification + mutual TLS | All three options |
+| TLS + broker verification (CA trust) | `SEEDER_MQTT_TLS_ENABLED` + `SEEDER_MQTT_TLS_VERIFY_CA` |
+| TLS + broker verification (thumbprint-style pinning) | `SEEDER_MQTT_TLS_ENABLED` + `SEEDER_MQTT_TLS_VERIFY_THUMBPRINT` |
+| TLS without broker verification (insecure) | `SEEDER_MQTT_TLS_ENABLED` + `SEEDER_MQTT_TLS_VERIFY_INSECURE` |
+| TLS + broker verification + mutual TLS (optional) | One verification mode + `SEEDER_MQTT_CLIENT_CERT` |
 
-> **Warning:** Enabling TLS without `SEEDER_MQTT_CA_CERT` skips broker
+> **Warning:** Selecting `SEEDER_MQTT_TLS_VERIFY_INSECURE` skips broker
 > certificate verification.  This protects against passive eavesdropping but
-> not against man-in-the-middle attacks.  Always enable `SEEDER_MQTT_CA_CERT`
-> in production.
+> not against man-in-the-middle attacks.  Use CA trust or thumbprint-style
+> pinning in production.
 
 ---
 
-### 5. Build and flash
+### 5. Validate broker + certs with Python (recommended gate)
+
+Before embedding certificates into firmware, run the Python smoke test to
+confirm your broker TLS listener and certificate chain are correct.
+
+Install dependency:
+
+```bash
+pip install paho-mqtt
+```
+
+Run the default mutual-TLS check (uses `certs/mqtt_ca.crt`,
+`certs/mqtt_client.crt`, `certs/mqtt_client.key`):
+
+```bash
+python test/mqtt/test_mqtt_tls.py
+```
+
+Windows PowerShell helper:
+
+```bash
+./test/mqtt/run_mqtt_tls_smoke.ps1
+```
+
+Run against a custom endpoint:
+
+```bash
+python test/mqtt/test_mqtt_tls.py --host 192.168.1.100 --port 8884
+```
+
+Optional diagnostics (temporary only):
+
+```bash
+python test/mqtt/test_mqtt_tls.py --insecure
+```
+
+If broker uses a self-signed cert that is not chained to your configured CA,
+use full verification bypass for debugging only:
+
+```bash
+python test/mqtt/test_mqtt_tls.py --no-verify
+```
+
+Optional negative check (proves TLS verification is enforced by retrying with
+an intentionally wrong CA and expecting failure):
+
+```bash
+python test/mqtt/test_mqtt_tls.py --negative-wrong-ca
+```
+
+PowerShell helper with negative check:
+
+```bash
+./test/mqtt/run_mqtt_tls_smoke.ps1 -NegativeWrongCa
+```
+
+PowerShell helper with full verification bypass (debug only):
+
+```bash
+./test/mqtt/run_mqtt_tls_smoke.ps1 -NoVerify
+```
+
+Expected success output includes:
+- `Connected with result code: 0`
+- `Received message: ...`
+- `SUCCESS: MQTT TLS smoke test passed.`
+
+If this test fails, fix broker/certificate issues first, then continue to ESP
+build/flash.
+
+---
+
+### 6. Build and flash
 
 ```bash
 idf.py build

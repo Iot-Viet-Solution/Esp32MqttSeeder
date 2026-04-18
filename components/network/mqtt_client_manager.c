@@ -15,9 +15,14 @@
 #include "freertos/timers.h"
 
 /* ── Optional TLS certificate references ──────────────────────────────────── */
-#ifdef CONFIG_SEEDER_MQTT_CA_CERT
+#ifdef CONFIG_SEEDER_MQTT_TLS_VERIFY_CA
 extern const uint8_t mqtt_ca_crt_start[]     asm("_binary_mqtt_ca_crt_start");
 extern const uint8_t mqtt_ca_crt_end[]       asm("_binary_mqtt_ca_crt_end");
+#endif
+
+#ifdef CONFIG_SEEDER_MQTT_TLS_VERIFY_THUMBPRINT
+extern const uint8_t mqtt_broker_crt_start[] asm("_binary_mqtt_broker_crt_start");
+extern const uint8_t mqtt_broker_crt_end[]   asm("_binary_mqtt_broker_crt_end");
 #endif
 
 #ifdef CONFIG_SEEDER_MQTT_CLIENT_CERT
@@ -261,14 +266,19 @@ esp_err_t mqtt_client_manager_init(void)
             .address.uri = APP_MQTT_BROKER_URI,
 #ifdef CONFIG_SEEDER_MQTT_TLS_ENABLED
             .verification = {
-#ifdef CONFIG_SEEDER_MQTT_CA_CERT
+    #ifdef CONFIG_SEEDER_MQTT_TLS_VERIFY_CA
                 .certificate     = (const char *)mqtt_ca_crt_start,
                 .certificate_len = (size_t)(mqtt_ca_crt_end - mqtt_ca_crt_start),
-#else
+    #elif defined(CONFIG_SEEDER_MQTT_TLS_VERIFY_THUMBPRINT)
+            /* Certificate pinning against broker leaf cert.
+             * ESP-MQTT/ESP-TLS does not expose a direct thumbprint field. */
+            .certificate     = (const char *)mqtt_broker_crt_start,
+            .certificate_len = (size_t)(mqtt_broker_crt_end - mqtt_broker_crt_start),
+    #else /* CONFIG_SEEDER_MQTT_TLS_VERIFY_INSECURE */
                 /* No CA cert provided – skip broker certificate verification. */
                 .skip_cert_common_name_check = true,
                 .use_global_ca_store         = false,
-#endif /* CONFIG_SEEDER_MQTT_CA_CERT */
+    #endif /* verification mode */
             },
 #endif /* CONFIG_SEEDER_MQTT_TLS_ENABLED */
         },

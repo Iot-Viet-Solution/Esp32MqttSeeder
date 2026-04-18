@@ -13,5 +13,12 @@ CONFIG_FREERTOS_HZ=1000
 # Set log level
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 
+# Default to one-way TLS for MQTT (server verification only)
+CONFIG_SEEDER_MQTT_BROKER_URI="mqtts://192.168.1.100:8883"
+CONFIG_SEEDER_MQTT_TLS_ENABLED=y
+CONFIG_SEEDER_MQTT_TLS_VERIFY_CA=y
+# Keep mutual TLS optional
+# CONFIG_SEEDER_MQTT_CLIENT_CERT is not set
+
 # Partition table – single-app with larger OTA partition
 CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y

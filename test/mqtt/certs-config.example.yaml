@@ -1,0 +1,39 @@
+certs-dir: certs
+days: 3650
+backup-existing: true
+
+defaults:
+  ca-cert-name: mqtt_ca.crt
+  ca-key-name: mqtt_ca.key
+
+jobs:
+  # One-way TLS default flow: generate CA + broker cert only.
+  - profile: broker
+    broker-cn: 192.168.0.137
+    broker-dns:
+      - localhost
+      - mqtt.local
+    broker-ip:
+      - 127.0.0.1
+      - 192.168.0.137
+    broker-pfx: true
+    broker-pfx-name: mqtt_broker.pfx
+    broker-pfx-password: change-me
+
+  # Optional mTLS shared client cert (uncomment if broker requires client certs)
+  # - profile: client
+  #   cert-dns:
+  #     - mqtt-client
+  #     - shared-client
+
+  # Optional per-device cert sample (uncomment if needed)
+  # - profile: custom
+  #   cert-name: seeder_device_001.crt
+  #   key-name: seeder_device_001.key
+  #   cert-cn: seeder-device-001
+  #   eku:
+  #     - client
+  #   cert-dns:
+  #     - seeder-device-001.local
+  #   cert-ip:
+  #     - 192.168.1.90
